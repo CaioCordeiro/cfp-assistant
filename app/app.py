@@ -26,7 +26,7 @@ from .media_extractor import extract_media_text, SUPPORTED_CONTENT_TYPES
 load_dotenv()
 
 app = Flask(__name__)
-app.logger.setLevel(logging.INFO)
+app.logger.setLevel(logging.DEBUG)
 
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -47,7 +47,11 @@ def _twilio_signature_valid() -> bool:
     signature = request.headers.get("X-Twilio-Signature", "")
     # Use request.url if PUBLIC_BASE_URL not set; otherwise rebuild absolute
     public_base = os.environ.get("PUBLIC_BASE_URL")
-    full_url = request.url if not public_base else urljoin(public_base.rstrip("/"), request.path)
+    full_url = (
+        request.url
+        if not public_base
+        else urljoin(public_base.rstrip("/"), request.path)
+    )
     return bool(validator.validate(full_url, request.form, signature))
 
 
@@ -70,6 +74,7 @@ def health():
 
 
 def _twiml_response(resp: MessagingResponse) -> Response:
+    logging.debug("Twilio Response: %s", str(resp))
     return Response(str(resp), status=200, content_type="text/xml")
 
 
@@ -116,7 +121,9 @@ def whatsapp_webhook():
         media_url = request.values.get("MediaUrl0")
         media_ct = request.values.get("MediaContentType0", "")
         if not media_url or not media_ct:
-            resp.message("I received a file but couldn't read its metadata. Please try again.")
+            resp.message(
+                "I received a file but couldn't read its metadata. Please try again."
+            )
             return _twiml_response(resp)
         if media_ct not in SUPPORTED_CONTENT_TYPES:
             resp.message(
@@ -127,7 +134,9 @@ def whatsapp_webhook():
             extracted = extract_media_text(media_url, media_ct)
         except Exception as e:
             app.logger.exception("Failed to fetch/extract media: %s", e)
-            resp.message("I couldn't read that file. Please confirm it's a PDF or PPTX and try again.")
+            resp.message(
+                "I couldn't read that file. Please confirm it's a PDF or PPTX and try again."
+            )
             return _twiml_response(resp)
         if not extracted or len(extracted.strip()) < 50:
             resp.message(
@@ -171,17 +180,49 @@ def whatsapp_webhook():
         except Exception:
             pass
 
-        submission_id = create_submission_draft(from_number, cfp.title, cfp.abstract)
+        submission_id = create_submission_draft(
+            from_number,
+            cfp.title,
+            cfp.abstract,
+            cfp.private_message,
+            cfp.main_language,
+            cfp.talk_type,
+            cfp.intended_audience,
+            cfp.estimated_duration,
+            cfp.live_coding,
+            cfp.special_requirements,
+        )
         upsert_conversation(from_number, "awaiting_confirm", submission_id)
 
-        reply = (
-            "Here’s a formatted proposal:\n\n"
-            f"Title: {cfp.title}\n\n"
-            f"Abstract:\n{cfp.abstract}\n\n"
-            "Reply YES to submit.\n"
-            "Reply EDIT to revise with more details.\n"
-            "Send STATUS to view your recent submissions."
+        # Build a richer preview including key CFP fields
+        live_coding_str = (
+            "Yes"
+            if str(getattr(cfp, "live_coding", "")).strip().lower()
+            in {"yes", "true", "1"}
+            else str(getattr(cfp, "live_coding", "No") or "No")
         )
+        reply_lines = [
+            "Here’s a formatted proposal:",
+            "",
+            f"Title: {cfp.title}",
+            "",
+            "Abstract:",
+            f"{cfp.abstract}",
+            "",
+            "Organizer Notes:",
+            f"- Private message:\n {getattr(cfp, 'private_message', '') or 'N/A'}",
+            f"- Language: {getattr(cfp, 'main_language', '') or 'N/A'}",
+            f"- Talk type: {getattr(cfp, 'talk_type', '') or 'N/A'}",
+            f"- Audience: {getattr(cfp, 'intended_audience', '') or 'N/A'}",
+            f"- Duration: {getattr(cfp, 'estimated_duration', '') or 'N/A'}",
+            f"- Live coding: {live_coding_str}",
+            f"- Special requirements: {getattr(cfp, 'special_requirements', '') or 'None'}",
+            "",
+            "Reply YES to submit.",
+            "Reply EDIT to revise with more details.",
+            "Send STATUS to view your recent submissions.",
+        ]
+        reply = "\n".join(reply_lines)
         resp.message(reply)
         return _twiml_response(resp)
 
@@ -205,14 +246,18 @@ def whatsapp_webhook():
 
     if state == "awaiting_email" and submission_id:
         if not EMAIL_REGEX.match(body):
-            resp.message("That doesn't look like an email. Please try again (e.g., name@example.com).")
+            resp.message(
+                "That doesn't look like an email. Please try again (e.g., name@example.com)."
+            )
             return _twiml_response(resp)
 
         update_submission_email_and_submit(int(submission_id), body)
         sub = get_submission(int(submission_id))
 
         try:
-            send_confirmation_email(body, sub["title"], sub["abstract"], int(submission_id))
+            send_confirmation_email(
+                body, sub["title"], sub["abstract"], int(submission_id)
+            )
         except Exception:
             # Best effort email; continue without failing
             pass
@@ -240,7 +285,9 @@ def status_callback():
 
     # Twilio sends form-encoded fields
     sid = request.form.get("MessageSid") or request.form.get("SmsSid") or ""
-    status = request.form.get("MessageStatus") or request.form.get("SmsStatus") or "unknown"
+    status = (
+        request.form.get("MessageStatus") or request.form.get("SmsStatus") or "unknown"
+    )
     error_code = request.form.get("ErrorCode")
     to_number = request.form.get("To")
     from_number = request.form.get("From")

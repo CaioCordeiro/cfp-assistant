@@ -11,8 +11,15 @@ def _utcnow_iso() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
+def _connect():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def init_db() -> None:
-    with sqlite3.connect(DB_PATH) as conn:
+    conn = _connect()
+    with conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS submissions (
@@ -20,6 +27,13 @@ def init_db() -> None:
                 user_number TEXT NOT NULL,
                 title TEXT,
                 abstract TEXT,
+                private_message TEXT,
+                main_language TEXT,
+                talk_type TEXT,
+                intended_audience TEXT,
+                estimated_duration TEXT,
+                live_coding TEXT,
+                special_requirements TEXT,
                 email TEXT,
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
@@ -27,6 +41,20 @@ def init_db() -> None:
             );
             """
         )
+        existing = {
+            row["name"] for row in conn.execute("PRAGMA table_info(submissions)")
+        }
+        for col, typ in [
+            ("private_message", "TEXT"),
+            ("main_language", "TEXT"),
+            ("talk_type", "TEXT"),
+            ("intended_audience", "TEXT"),
+            ("estimated_duration", "TEXT"),
+            ("live_coding", "INTEGER"),
+            ("special_requirements", "TEXT"),
+        ]:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE submissions ADD COLUMN {col} {typ}")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS conversations (
@@ -64,7 +92,9 @@ def get_conn():
         conn.close()
 
 
-def upsert_conversation(user_number: str, state: str, submission_id: Optional[int] = None):
+def upsert_conversation(
+    user_number: str, state: str, submission_id: Optional[int] = None
+):
     with get_conn() as conn:
         now = _utcnow_iso()
         conn.execute(
@@ -89,15 +119,44 @@ def get_conversation(user_number: str) -> Optional[sqlite3.Row]:
         return cur.fetchone()
 
 
-def create_submission_draft(user_number: str, title: str, abstract: str) -> int:
-    with get_conn() as conn:
-        now = _utcnow_iso()
+def create_submission_draft(
+    user_number: str,
+    title: str,
+    abstract: str,
+    private_message: Optional[str],
+    main_language: Optional[str],
+    talk_type: Optional[str],
+    intended_audience: Optional[str],
+    estimated_duration: Optional[str],
+    live_coding: Optional[bool],
+    special_requirements: Optional[str],
+) -> int:
+    conn = _connect()
+    now = _utcnow_iso()
+    with conn:
         cur = conn.execute(
             """
-            INSERT INTO submissions(user_number, title, abstract, email, status, created_at, updated_at)
-            VALUES (?, ?, ?, NULL, 'draft', ?, ?)
+            INSERT INTO submissions (
+                user_number, title, abstract,
+                private_message, main_language, talk_type, intended_audience,
+                estimated_duration, live_coding, special_requirements,
+                status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
             """,
-            (user_number, title, abstract, now, now),
+            (
+                user_number,
+                title,
+                abstract,
+                private_message,
+                main_language,
+                talk_type,
+                intended_audience,
+                estimated_duration,
+                1 if (live_coding is True) else 0 if (live_coding is False) else None,
+                special_requirements,
+                now,
+                now,
+            ),
         )
         return int(cur.lastrowid)
 
@@ -157,5 +216,12 @@ def record_message_status(
             INSERT INTO message_status(message_sid, message_status, error_code, to_number, from_number, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (message_sid, message_status, error_code, to_number, from_number, _utcnow_iso()),
+            (
+                message_sid,
+                message_status,
+                error_code,
+                to_number,
+                from_number,
+                _utcnow_iso(),
+            ),
         )

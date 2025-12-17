@@ -3,7 +3,9 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To, Content
 
 
-def send_confirmation_email(to_email: str, title: str, abstract: str, submission_id: int) -> None:
+def send_confirmation_email(
+    to_email: str, title: str, abstract: str, submission_id: int
+) -> None:
     api_key = os.environ.get("SENDGRID_API_KEY")
     from_email = os.environ.get("FROM_EMAIL")
     from_name = os.environ.get("FROM_NAME", "CFP Assistant")
