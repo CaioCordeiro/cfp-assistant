@@ -1,0 +1,14 @@
+Flask>=3.0.0,<4.0.0
+twilio>=9.0.0,<10.0.0
+sendgrid>=6.11.0,<7.0.0
+python-dotenv>=1.0.1,<2.0.0
+openai>=1.13.3
+langchain>=0.2.0
+langchain-openai>=0.1.0
+pydantic>=2.5.0
+gunicorn>=21.2.0
+langchain-huggingface>=0.1.0
+huggingface-hub>=0.23.0
+requests>=2.31.0
+pypdf>=3.17.1
+python-pptx>=0.6.23
